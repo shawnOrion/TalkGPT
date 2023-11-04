@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Simple Chat App</title>
+    <style>
+      body {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+        height: 100%;
+      }
+      main {
+        height: 100%;
+        width: 100%;
+      }
+      #chatWindow {
+        height: calc(100vh - 200px);
+        width: 100%;
+        overflow-y: auto;
+      }
+      #messageInput {
+        width: calc(100vw - 100px);
+        height: 150px;
+      }
+      .message {
+        border: 1px solid #ccc;
+        padding: 10px;
+        width: 150px;
+        margin: 10px;
+      }
+      .user {
+        margin-left: auto;
+      }
+      .assistant {
+        margin-right: auto;
+      }
+      .stack {
+        display: flex;
+        flex-direction: column;
+        width: 50px;
+        justify-content: space-between;
+      }
+      .input-area {
+        display: flex;
+        flex-direction: row;
+        margin-top: auto;
+      }
+
+      button {
+        width: 100px;
+        height: 50px;
+        /* pointer cursor  */
+        cursor: pointer;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="main">
+      <div id="chatWindow"></div>
+      <div class="input-area">
+        <textarea id="messageInput"></textarea>
+        <div class="stack">
+          <button id="recordButton">Start</button>
+          <button id="stopButton">Stop</button>
+          <button id="sendButton">Send</button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      let synth = window.speechSynthesis;
+      let utteranceQueue = [];
+      const messages = [
+        {
+          role: "system",
+          content:
+            "Carry out a casual conversation with the user. Responses should be no more than a few sentences where possible. Act as if you are a human. Use common sense and vary sentence length. Make statements more than asking questions.",
+        },
+      ];
+
+      //
+      const API_KEY = "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";
+      const messageInput = document.getElementById("messageInput");
+      const sendButton = document.getElementById("sendButton");
+      const chatWindow = document.getElementById("chatWindow");
+      const volumeDial = document.getElementById("volumeDial");
+      const record = document.querySelector("#recordButton");
+      const stopRecord = document.querySelector("#stopButton");
+      const recordedAudio = document.querySelector("#recordedAudio");
+      let rec = null;
+      async function transcribeAudio(blob) {
+        const formData = new FormData();
+        formData.append("model", "whisper-1");
+        formData.append("file", blob, "recording.mp3"); // The third parameter 'recording.mp3' is the filename
+        formData.append("response_format", "text");
+
+        try {
+          const response = await fetch(
+            "https://api.openai.com/v1/audio/transcriptions",
+            {
+              method: "POST",
+              headers: {
+                Authorization:
+                  "Bearer " +
+                  "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",
+                // 'Content-Type': 'multipart/form-data' is not needed, the browser will set it correctly along with the boundary parameter
+              },
+              body: formData,
+            }
+          );
+
+          if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+          }
+
+          const text = await response.text();
+          return text; // This will be the transcribed text
+        } catch (error) {
+          console.error("There was a problem with the fetch operation:", error);
+        }
+      }
+
+      function setupRecorder(stream) {
+        rec = new MediaRecorder(stream);
+        rec.ondataavailable = async (e) => {
+          audioChunks.push(e.data);
+          if (rec.state === "inactive") {
+            let blob = new Blob(audioChunks, { type: "audio/mpeg-3" });
+
+            console.log("Sending data for transcription");
+            const text = await transcribeAudio(blob);
+            console.log("transcription: ", text);
+            if (text) {
+              messageInput.value = text; // Display the transcribed text
+            }
+          }
+        };
+      }
+
+      navigator.mediaDevices
+        .getUserMedia({ audio: true })
+        .then((stream) => {
+          setupRecorder(stream);
+        })
+        .catch((error) => {
+          console.log("Error:", error);
+        });
+      record.onclick = (e) => {
+        console.log("I was clicked");
+        record.disabled = true;
+        record.style.backgroundColor = "red";
+        stopRecord.disabled = false;
+        audioChunks = [];
+        if (rec) {
+          rec.start();
+        } else {
+          console.log("rec is null");
+        }
+      };
+
+      stopRecord.onclick = (e) => {
+        console.log("I was clicked");
+        record.disabled = false;
+        record.style.backgroundColor = "";
+        stopRecord.disabled = true;
+        rec.stop();
+      };
+
+      // function to speak text
+      function speakText(text) {
+        let utterance = new SpeechSynthesisUtterance();
+        utterance.text = text;
+        utterance.volume = 1;
+        utterance.onstart = function (event) {
+          console.log("Speech started");
+        };
+        utterance.onend = function (event) {
+          console.log("Speech ended");
+          if (utteranceQueue.length > 0) {
+            synth.speak(utteranceQueue.shift());
+          }
+        };
+        utterance.onerror = function (event) {
+          console.error("An error has occurred:", event.error);
+        };
+
+        if (synth.speaking) {
+          utteranceQueue.push(utterance);
+        } else {
+          console.log("speaking");
+          synth.cancel();
+          synth.speak(utterance);
+        }
+      }
+      const getChatResponse = async (userInput = "") => {
+        messages.push({ role: "user", content: userInput });
+        let currentResponse = "";
+        let recentJson = "";
+        let tempChunks = [];
+        let numChunks = 0;
+        let incompleteFragment = "";
+        console.log("thinking...");
+        try {
+          const response = await fetch(
+            "https://api.openai.com/v1/chat/completions",
+            {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${API_KEY}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                model: "gpt-3.5-turbo",
+                messages: messages,
+                stream: true,
+              }),
+            }
+          );
+          if (!response.ok) {
+            console.error(response.statusText);
+            return;
+          }
+          const reader = response.body?.getReader();
+          if (!reader) {
+            console.error("No reader");
+            return;
+          }
+
+          // reads the stream
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) {
+              break;
+            }
+
+            const textDecoder = new TextDecoder("utf-8");
+            const chunk = textDecoder.decode(value);
+            // console.log(chunk);
+            let deltaText = "";
+
+            // a chunk may be multiple lines of text, but is usually just a token of text
+            for (const line of chunk.split("\n")) {
+              const trimmedLine = line.trim();
+              if (!trimmedLine || trimmedLine == "data: [DONE]") {
+                continue;
+              }
+              let json = trimmedLine.replace("data: ", "");
+              // save the json for debugging
+              recentJson = json;
+              // save incomplete json fragments
+              if (!recentJson.toString().endsWith("}")) {
+                console.log("saving incomplete fragment");
+                incompleteFragment += recentJson;
+                continue;
+              } else if (
+                // complete the fragment if it is the end of an incomplete chunk
+                incompleteFragment != "" &&
+                recentJson.toString().endsWith("}")
+              ) {
+                console.log("completing fragment");
+                json = incompleteFragment + recentJson;
+                incompleteFragment = "";
+                console.log(json);
+              }
+              const object = JSON.parse(json);
+              const content = object.choices[0].delta.content;
+
+              if (content) {
+                deltaText += content;
+              }
+            }
+            // push the new text to the current response
+            if (deltaText) {
+              currentResponse += deltaText;
+            }
+            appendMessage(deltaText, "assistant", numChunks == 0);
+            numChunks++;
+          }
+          const completeResponse = currentResponse;
+          messages.push({ role: "assistant", content: currentResponse });
+          return completeResponse;
+        } catch (e) {
+          console.log(e);
+          console.log(recentJson);
+          console.log(currentResponse);
+          return "error";
+        }
+      };
+
+      // error inner text null. that means the first message is not being appended.
+      const appendMessage = (text, role, isStreamStart) => {
+        if (isStreamStart) {
+          const messageElement = document.createElement("div");
+          messageElement.classList.add("message", role);
+          messageElement.innerText = text;
+          chatWindow.appendChild(messageElement);
+        } else {
+          // select recent child of window
+          const messageElement = chatWindow.lastChild;
+          messageElement.innerText += `${text}`;
+        }
+        // scroll top
+        chatWindow.scrollTop = chatWindow.scrollHeight;
+      };
+
+      sendButton.addEventListener("click", async () => {
+        // temp test
+        const message = messageInput.value;
+        appendMessage(message, "user", true);
+        messageInput.value = "";
+        const response = await getChatResponse(message);
+        speakText(response);
+      });
+    </script>
+  </body>
+</html>
